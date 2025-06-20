@@ -4,7 +4,8 @@ import ast
 
 csv_names = {
     "genres" : "CSV/genres.csv", 
-    "movies" : "CSV/movies.csv"
+    "movies" : "CSV/movies.csv",
+    "main" : "CSV/main.csv"
 }
 
 def generate_csv(key_file_name, data):
