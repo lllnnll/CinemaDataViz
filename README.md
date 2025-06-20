@@ -17,3 +17,7 @@ pip install -r requirements.txt
 Crée un fichier .env en prenant exemple sur .env.exemple
 
 ### 4. Code !
+
+Lien de l'API : 
+
+https://developer.themoviedb.org/docs/getting-started
