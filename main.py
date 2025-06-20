@@ -51,13 +51,24 @@ def plot_avg_rating_by_genre(df):
     plt.tight_layout()
     plt.show()
 
+def get_total_pages():
+    url = f"{BASE_URL}/movie/popular?api_key={API_KEY}&language=en-US&page=1"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json().get('total_pages')
+    else:
+        print("Erreur lors de la récupération du nombre de pages.")
+        return 0
+
 # === MAIN ===
-genre_map = get_genres()
-movies = get_movies(pages=5)  # 5 pages → environ 100 films
-df = enrich_movies(movies, genre_map)
+# genre_map = get_genres()
+# movies = get_movies(pages=5)  # 5 pages → environ 100 films
+# df = enrich_movies(movies, genre_map)
 
 # Aperçu des données
-print(df.head())
+# print(df.head())
 
 # Graphique
-plot_avg_rating_by_genre(df)
+# plot_avg_rating_by_genre(df)
+
+print(get_total_pages())
