@@ -18,15 +18,6 @@ def get_genres():
         return get_genres_from_csv()
     else:
        return get_genres_from_api()
-
-def get_total_pages():
-    url = f"{BASE_URL}/movie/popular?api_key={API_KEY}&language=en-US&page=1"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json().get('total_pages')
-    else:
-        print("Erreur lors de la récupération du nombre de pages.")
-        return 0
     
 def get_genres_from_csv():
     return csv_utils.get_data_from_csv("genres")
@@ -86,7 +77,7 @@ def get_movies_from_api(pages):
 
 def get_tv_shows(pages=5):
     if csv_utils.csv_exists("tv_shows"):
-        return csv_utils.get_data_from_csv("tv_shows")
+        return get_tv_shows_from_csv()
     else:
         return get_tv_shows_from_api(pages)
 
@@ -145,7 +136,6 @@ def enrich_movies(movies, genre_map):
     df['genres'] = df['genre_ids'].apply(lambda ids: [genre_map.get(i) for i in ids])
     df = df.explode('genres')  # Pour séparer les films multi-genres
     df = df.drop(columns='genre_ids')
-    csv_utils.generate_csv("main", df)
     return df
 
 # === 4. Visualisation : note moyenne par genre ===
