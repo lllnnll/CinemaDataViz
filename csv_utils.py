@@ -6,7 +6,8 @@ csv_names = {
     "genres" : "CSV/genres.csv", 
     "movies" : "CSV/movies.csv",
     "tv_shows" : "CSV/tv_shows.csv",
-    "main" : "CSV/main.csv"
+    "main" : "CSV/main.csv",
+    "final" : "CSV/final.csv"
 }
 
 def generate_csv(key_file_name, data):
