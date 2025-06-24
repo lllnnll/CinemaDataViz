@@ -166,17 +166,131 @@ def get_total_pages():
     else:
         print("Erreur lors de la récupération du nombre de pages.")
         return 0
+    
+def plot_runtime_trend(df):
+    df = df.copy()
+
+    # Nettoyage : on enlève les contenus sans runtime ou année
+    df = df[df['runtime'].notnull()]
+    df = df[df['release_date'].notnull()]
+    df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
+    df = df[df['year'].notnull()]
+    df['year'] = df['year'].astype(int)
+
+    # On filtre les années raisonnables
+    df = df[(df['year'] >= 1980) & (df['year'] <= 2024)]
+
+    # Moyenne par type et année
+    grouped = df.groupby(['type', 'year'])['runtime'].mean().reset_index()
+
+    # Tracé
+    plt.figure(figsize=(12,6))
+    for content_type in grouped['type'].unique():
+        data = grouped[grouped['type'] == content_type]
+        plt.plot(data['year'], data['runtime'], label=content_type.capitalize())
+
+    plt.title("Évolution de la durée moyenne des films et séries (1980–2024)")
+    plt.xlabel("Année de sortie")
+    plt.ylabel("Durée moyenne (minutes)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def get_movies_from_api(pages_per_year=10): ## Récupération des films par année (1980–2023)
+    movies = []
+    for year in range(1980, 2024):  # Modifie si tu veux d'autres années
+        for page in range(1, pages_per_year + 1):
+            print(f"[MOVIE] Year {year} - Page {page}")
+            url = f"{BASE_URL}/discover/movie?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&primary_release_year={year}&page={page}"
+            response = requests.get(url)
+            if response.status_code != 200:
+                print(f"Erreur page {page} pour l'année {year}")
+                continue
+
+            for movie in response.json().get('results', []):
+                movie_id = movie.get('id')
+                details_url = f"{BASE_URL}/movie/{movie_id}?api_key={API_KEY}&language=en-US"
+                details_response = requests.get(details_url)
+                if details_response.status_code != 200:
+                    continue
+                details = details_response.json()
+
+                movies.append({
+                    'title': movie.get('title'),
+                    'rating': movie.get('vote_average'),
+                    'votes': movie.get('vote_count'),
+                    'genre_ids': movie.get('genre_ids'),
+                    'language': movie.get('original_language'),
+                    'release_date': movie.get('release_date'),
+                    'runtime': details.get('runtime'),
+                    'budget': details.get('budget'),
+                    'revenue': details.get('revenue'),
+                })
+    csv_utils.generate_csv("movies", movies)
+    return movies
+
+def get_tv_shows_from_api(pages_per_year=10): # Récupération des séries par année (1980–2023)
+    tv_shows = []
+    for year in range(1980, 2024):
+        for page in range(1, pages_per_year + 1):
+            print(f"[TV] Year {year} - Page {page}")
+            url = f"{BASE_URL}/discover/tv?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&first_air_date_year={year}&page={page}"
+            response = requests.get(url)
+            if response.status_code != 200:
+                print(f"Erreur page {page} pour l'année {year}")
+                continue
+
+            for tv in response.json().get('results', []):
+                tv_id = tv.get('id')
+                details_url = f"{BASE_URL}/tv/{tv_id}?api_key={API_KEY}&language=en-US"
+                details_response = requests.get(details_url)
+                if details_response.status_code != 200:
+                    continue
+                details = details_response.json()
+
+                tv_shows.append({
+                    'title': tv.get('name'),
+                    'rating': tv.get('vote_average'),
+                    'votes': tv.get('vote_count'),
+                    'genre_ids': tv.get('genre_ids'),
+                    'language': tv.get('original_language'),
+                    'release_date': tv.get('first_air_date'),
+                    'runtime': details.get('episode_run_time')[0] if details.get('episode_run_time') else None,
+                    'budget': None,
+                    'revenue': None,
+                    'number_of_seasons': details.get('number_of_seasons'),
+                    'number_of_episodes': details.get('number_of_episodes'),
+                })
+    csv_utils.generate_csv("tv_shows", tv_shows)
+    return tv_shows
 
 # === MAIN ===
 #genre_map = get_genres()
-movies = get_movies(50)        # Récupère ~1000 films
-tv_shows = get_tv_shows(50)    # Récupère ~1000 séries
+movies = get_movies_from_api(5)
+tv_shows = get_tv_shows_from_api(5)
 
 print(f"Movies loaded: {type(movies)} with length {len(movies) if movies else 'None'}")
 print(f"TV Shows loaded: {type(tv_shows)} with length {len(tv_shows) if tv_shows else 'None'}")
 
 all_df = merge_movies_and_tv_shows(movies, tv_shows)
-print(all_df.head())
+
+def plot_budget_vs_rating(df):
+    df = df.copy()
+    df = df[df['type'] == 'movie']
+    df = df[(df['budget'] > 0) & (df['rating'].notnull())]
+
+    plt.figure(figsize=(10, 6))
+    plt.scatter(df['budget'], df['rating'], alpha=0.5, color='darkcyan')
+    plt.title("Budget vs Note (Films)")
+    plt.xlabel("Budget (USD)")
+    plt.ylabel("Note moyenne")
+    plt.xscale('log')  # Logarithmique car certains budgets explosent
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+#print(all_df.head())
 
 # Aperçu des données
 # print(df.head())
@@ -184,4 +298,6 @@ print(all_df.head())
 # Graphique
 # plot_avg_rating_by_genre(df)
 
-print(get_total_pages())
+#print(get_total_pages())
+plot_budget_vs_rating(all_df)
+plot_runtime_trend(all_df)
