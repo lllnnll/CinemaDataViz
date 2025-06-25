@@ -6,316 +6,416 @@ from dotenv import load_dotenv
 import csv_utils
 import time
 import ast
+import numpy as np
 
 load_dotenv()
 # === CONFIGURATION ===
 API_KEY = os.getenv('TMDB_API_KEY')
 BASE_URL = 'https://api.themoviedb.org/3'
 
-
 # === 1. Récupération des genres pour les ID → noms ===
-def get_genres():
-    if csv_utils.csv_exists("genres"):
-        return get_genres_from_csv()
-    else:
-       return get_genres_from_api()
-
-def get_total_pages():
-    url = f"{BASE_URL}/movie/popular?api_key={API_KEY}&language=en-US&page=1"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json().get('total_pages')
-    else:
-        print("Erreur lors de la récupération du nombre de pages.")
-        return 0
-    
 def get_genres_from_csv():
-    return csv_utils.get_data_from_csv("genres")
+    """Récupère les genres depuis le CSV et les convertit en dictionnaire"""
+    genres_data = csv_utils.get_data_from_csv("genres")
+    
+    # Vérifier le format des données
+    if isinstance(genres_data, pd.DataFrame):
+        # Si c'est un DataFrame pandas
+        return {row['id']: row['name'] for _, row in genres_data.iterrows()}
+    elif isinstance(genres_data, list) and len(genres_data) > 0:
+        # Si c'est une liste de dictionnaires
+        if isinstance(genres_data[0], dict):
+            return {g['id']: g['name'] for g in genres_data}
+        else:
+            print("Format de données genres inattendu, récupération depuis l'API...")
+            return get_genres_from_api()
+    else:
+        print("Données genres vides ou format invalide, récupération depuis l'API...")
+        return get_genres_from_api()
 
 def get_genres_from_api():
-    movie_url = f"{BASE_URL}/genre/movie/list?api_key={API_KEY}&language=en-US"
-    tv_url = f"{BASE_URL}/genre/tv/list?api_key={API_KEY}&language=en-US"
+    """Récupère les genres depuis l'API TMDB"""
+    try:
+        movie_url = f"{BASE_URL}/genre/movie/list?api_key={API_KEY}&language=en-US"
+        tv_url = f"{BASE_URL}/genre/tv/list?api_key={API_KEY}&language=en-US"
 
-    movie_genres = requests.get(movie_url).json().get('genres', [])
-    tv_genres = requests.get(tv_url).json().get('genres', [])
+        movie_response = requests.get(movie_url)
+        tv_response = requests.get(tv_url)
+        
+        if movie_response.status_code != 200 or tv_response.status_code != 200:
+            print("Erreur lors de la récupération des genres depuis l'API")
+            return {}
 
-    # Fusion sans doublons
-    all_genres = {g['id']: g['name'] for g in movie_genres}
-    all_genres.update({g['id']: g['name'] for g in tv_genres})
+        movie_genres = movie_response.json().get('genres', [])
+        tv_genres = tv_response.json().get('genres', [])
 
-    genre_list = [{'id': k, 'name': v} for k, v in all_genres.items()]
-    csv_utils.generate_csv("genres", genre_list)
-    return genre_list
+        # Fusion sans doublons
+        all_genres = {g['id']: g['name'] for g in movie_genres}
+        all_genres.update({g['id']: g['name'] for g in tv_genres})
 
-# === 2. Récupération de films populaires ===
-def get_movies(pages=5):  # Nombre de pages (chaque page ≈ 20 films)
-    if csv_utils.csv_exists("movies"):
-        return get_movies_from_csv()
-    else:
-       return get_movies_from_api(pages)
+        # Sauvegarder en CSV
+        genre_list = [{'id': k, 'name': v} for k, v in all_genres.items()]
+        csv_utils.generate_csv("genres", genre_list)
+        
+        print(f"Récupéré {len(all_genres)} genres depuis l'API")
+        return all_genres
+        
+    except Exception as e:
+        print(f"Erreur lors de la récupération des genres: {e}")
+        return {}
 
-def get_movies_from_csv():
-    return csv_utils.get_data_from_csv("movies")
+def get_genres():
+    """Point d'entrée principal pour récupérer les genres"""
+    try:
+        if csv_utils.csv_exists("genres"):
+            print("Chargement des genres depuis le CSV...")
+            genres = get_genres_from_csv()
+            if genres:  # Si la récupération CSV a fonctionné
+                print(f"Chargé {len(genres)} genres depuis le CSV")
+                return genres
+        
+        print("Récupération des genres depuis l'API...")
+        return get_genres_from_api()
+        
+    except Exception as e:
+        print(f"Erreur dans get_genres: {e}")
+        return {}
 
-def get_movies_from_api(pages):
+# === 2. NOUVELLE RÉCUPÉRATION EXHAUSTIVE ===
+def get_movies_comprehensive(start_year=1980, end_year=2024):
+    """Récupération exhaustive de films par année avec multiple catégories"""
+    if csv_utils.csv_exists("movies_comprehensive"):
+        print("Chargement des films depuis le CSV...")
+        return csv_utils.get_data_from_csv("movies_comprehensive")
+    
     movies = []
-    for page in range(1, pages + 1):
-        print(f"Fetching page {page}...")
-        url = f"{BASE_URL}/movie/popular?api_key={API_KEY}&language=en-US&page={page}"
-        response = requests.get(url)
-        data = response.json()['results']
-
-        for movie in data:
-            movie_id = movie.get('id')
-            details_url = f"{BASE_URL}/movie/{movie_id}?api_key={API_KEY}&language=en-US"
-            details_response = requests.get(details_url)
+    
+    # Catégories et critères de tri
+    sort_criteria = [
+        'popularity.desc',
+        'vote_average.desc', 
+        'revenue.desc',
+        'vote_count.desc'
+    ]
+    
+    # Genres principaux
+    movie_genres = [28, 12, 16, 35, 80, 99, 18, 10751, 14, 36, 27, 10402, 9648, 10749, 878, 10770, 53, 10752, 37]
+    
+    for year in range(start_year, end_year + 1):
+        print(f"=== Films année {year} ===")
+        year_movies = []
+        
+        # 1. Par critères de tri
+        for sort_by in sort_criteria:
+            print(f"  Tri: {sort_by}")
+            for page in range(1, 3):  # 2 pages par critère
+                url = f"{BASE_URL}/discover/movie?api_key={API_KEY}&language=en-US&sort_by={sort_by}&primary_release_year={year}&vote_count.gte=10&page={page}"
+                
+                try:
+                    response = requests.get(url)
+                    if response.status_code != 200:
+                        continue
+                    
+                    for movie in response.json().get('results', []):
+                        movie_details = get_movie_details_complete(movie, f"{sort_by}_{year}")
+                        if movie_details:
+                            year_movies.append(movie_details)
+                    
+                except Exception as e:
+                    print(f"    Erreur: {e}")
+                    continue
+        
+        # 2. Par genres
+        for genre_id in movie_genres:  # TOUS les genres au lieu de [:8]
+            print(f"  Genre: {genre_id}")
+            url = f"{BASE_URL}/discover/movie?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&primary_release_year={year}&with_genres={genre_id}&vote_count.gte=5&page=1"
             
-            if details_response.status_code != 200:
-                print(f"Erreur détails film {movie.get('title')} (id={movie_id})")
+            try:
+                response = requests.get(url)
+                if response.status_code != 200:
+                    continue
+                
+                for movie in response.json().get('results', [])[:3]:  # Réduire à 3 par genre pour éviter trop de données
+                    movie_details = get_movie_details_complete(movie, f"genre_{genre_id}_{year}")
+                    if movie_details:
+                        year_movies.append(movie_details)
+                
+            except Exception as e:
+                print(f"    Erreur genre: {e}")
                 continue
+        
+        # Supprimer doublons année
+        unique_year_movies = {movie['id']: movie for movie in year_movies if movie}.values()
+        movies.extend(list(unique_year_movies))
+        print(f"  → {len(unique_year_movies)} films uniques")
+    
+    # Supprimer doublons globaux
+    unique_movies = {movie['id']: movie for movie in movies}.values()
+    final_movies = list(unique_movies)
+    
+    csv_utils.generate_csv("movies_comprehensive", final_movies)
+    print(f"TOTAL FILMS: {len(final_movies)}")
+    return final_movies
 
-            details = details_response.json()
-
-            movies.append({
-                'title': movie.get('title'),
-                'rating': movie.get('vote_average'),
-                'votes': movie.get('vote_count'),
-                'genre_ids': movie.get('genre_ids'),
-                'language': movie.get('original_language'),
-                'release_date': movie.get('release_date'),
-                'runtime': details.get('runtime'),
-                'budget': details.get('budget'),
-                'revenue': details.get('revenue'),
-            })
-
-            time.sleep(0.25)  # Attendre pour éviter de se faire bloquer par l'API
-
-    csv_utils.generate_csv("movies", movies)
-    return movies
-
-def get_tv_shows(pages=5):
-    if csv_utils.csv_exists("tv_shows"):
-        return csv_utils.get_data_from_csv("tv_shows")
-    else:
-        return get_tv_shows_from_api(pages)
-
-def get_tv_shows_from_csv():
-    return csv_utils.get_data_from_csv("tv_shows")
-
-def get_tv_shows_from_api(pages):
+def get_tv_shows_comprehensive(start_year=1980, end_year=2024):
+    """Récupération exhaustive de séries par année"""
+    if csv_utils.csv_exists("tv_shows_comprehensive"):
+        print("Chargement des séries depuis le CSV...")
+        return csv_utils.get_data_from_csv("tv_shows_comprehensive")
+    
     tv_shows = []
-    for page in range(1, pages + 1):
-        print(f"Fetching TV page {page}...")
-        url = f"{BASE_URL}/tv/popular?api_key={API_KEY}&language=en-US&page={page}"
-        response = requests.get(url)
-        data = response.json()['results']
-
-        for tv in data:
-            tv_id = tv.get('id')
-            details_url = f"{BASE_URL}/tv/{tv_id}?api_key={API_KEY}&language=en-US"
-            details_response = requests.get(details_url)
-
-            if details_response.status_code != 200:
-                print(f"Erreur détails série {tv.get('name')} (id={tv_id})")
+    
+    sort_criteria = [
+        'popularity.desc',
+        'vote_average.desc',
+        'vote_count.desc'
+    ]
+    
+    tv_genres = [10759, 16, 35, 80, 99, 18, 10751, 14, 27, 10762, 9648, 10763, 10764, 10765, 10766, 10767, 10768]
+    
+    for year in range(start_year, end_year + 1):
+        print(f"=== Séries année {year} ===")
+        year_shows = []
+        
+        # Par critères
+        for sort_by in sort_criteria:
+            print(f"  Tri: {sort_by}")
+            for page in range(1, 2):  # 1 page par critère
+                url = f"{BASE_URL}/discover/tv?api_key={API_KEY}&language=en-US&sort_by={sort_by}&first_air_date_year={year}&vote_count.gte=5&page={page}"
+                
+                try:
+                    response = requests.get(url)
+                    if response.status_code != 200:
+                        continue
+                    
+                    for tv in response.json().get('results', []):
+                        tv_details = get_tv_details_complete(tv, f"{sort_by}_{year}")
+                        if tv_details:
+                            year_shows.append(tv_details)
+                    
+                except Exception as e:
+                    print(f"    Erreur: {e}")
+                    continue
+        
+        # Par genres
+        for genre_id in tv_genres[:6]:
+            print(f"  Genre TV: {genre_id}")
+            url = f"{BASE_URL}/discover/tv?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&first_air_date_year={year}&with_genres={genre_id}&page=1"
+            
+            try:
+                response = requests.get(url)
+                if response.status_code != 200:
+                    continue
+                
+                for tv in response.json().get('results', [])[:3]:
+                    tv_details = get_tv_details_complete(tv, f"genre_{genre_id}_{year}")
+                    if tv_details:
+                        year_shows.append(tv_details)
+                
+            except Exception as e:
                 continue
+        
+        unique_year_shows = {show['id']: show for show in year_shows if show}.values()
+        tv_shows.extend(list(unique_year_shows))
+        print(f"  → {len(unique_year_shows)} séries uniques")
+    
+    unique_shows = {show['id']: show for show in tv_shows}.values()
+    final_shows = list(unique_shows)
+    
+    csv_utils.generate_csv("tv_shows_comprehensive", final_shows)
+    print(f"TOTAL SÉRIES: {len(final_shows)}")
+    return final_shows
 
-            details = details_response.json()
+def get_movie_details_complete(movie_data, source_category):
+    """Récupération complète des détails d'un film"""
+    movie_id = movie_data.get('id')
+    if not movie_id:
+        return None
+    
+    try:
+        # Détails du film
+        details_url = f"{BASE_URL}/movie/{movie_id}?api_key={API_KEY}&language=en-US"
+        details_response = requests.get(details_url)
+        
+        if details_response.status_code != 200:
+            return None
+        
+        details = details_response.json()
+        
+        # Crédits (optionnel)
+        credits = {}
+        try:
+            credits_url = f"{BASE_URL}/movie/{movie_id}/credits?api_key={API_KEY}"
+            credits_response = requests.get(credits_url)
+            if credits_response.status_code == 200:
+                credits = credits_response.json()
+        except:
+            pass
+        
+        return {
+            'id': movie_id,
+            'title': details.get('title'),
+            'rating': details.get('vote_average'),
+            'votes': details.get('vote_count'),
+            'genre_ids': movie_data.get('genre_ids', []),
+            'language': details.get('original_language'),
+            'release_date': details.get('release_date'),
+            'runtime': details.get('runtime'),
+            'budget': details.get('budget', 0),
+            'revenue': details.get('revenue', 0),
+            'popularity': details.get('popularity'),
+            'overview': details.get('overview', '')[:300],
+            'production_countries': [c['name'] for c in details.get('production_countries', [])],
+            'production_companies': [c['name'] for c in details.get('production_companies', [])][:3],
+            'director': get_director_from_credits(credits),
+            'main_actors': get_main_actors_from_credits(credits),
+            'source_category': source_category,
+            'type': 'movie'
+        }
+    except Exception as e:
+        print(f"Erreur film {movie_id}: {e}")
+        return None
 
-            tv_shows.append({
-                'title': tv.get('name'),
-                'rating': tv.get('vote_average'),
-                'votes': tv.get('vote_count'),
-                'genre_ids': tv.get('genre_ids'),
-                'language': tv.get('original_language'),
-                'release_date': tv.get('first_air_date'),
-                'runtime': details.get('episode_run_time')[0] if details.get('episode_run_time') else None,
-                'budget': None,  # Non disponible dans l’API TV
-                'revenue': None,  # Non disponible non plus
-                'number_of_seasons': details.get('number_of_seasons'),
-                'number_of_episodes': details.get('number_of_episodes'),
-            })
+def get_tv_details_complete(tv_data, source_category):
+    """Récupération complète des détails d'une série"""
+    tv_id = tv_data.get('id')
+    if not tv_id:
+        return None
+    
+    try:
+        details_url = f"{BASE_URL}/tv/{tv_id}?api_key={API_KEY}&language=en-US"
+        details_response = requests.get(details_url)
+        
+        if details_response.status_code != 200:
+            return None
+        
+        details = details_response.json()
+        
+        credits = {}
+        try:
+            credits_url = f"{BASE_URL}/tv/{tv_id}/credits?api_key={API_KEY}"
+            credits_response = requests.get(credits_url)
+            if credits_response.status_code == 200:
+                credits = credits_response.json()
+        except:
+            pass
+        
+        return {
+            'id': tv_id,
+            'title': details.get('name'),
+            'rating': details.get('vote_average'),
+            'votes': details.get('vote_count'),
+            'genre_ids': tv_data.get('genre_ids', []),
+            'language': details.get('original_language'),
+            'release_date': details.get('first_air_date'),
+            'runtime': details.get('episode_run_time')[0] if details.get('episode_run_time') else None,
+            'budget': None,
+            'revenue': None,
+            'popularity': details.get('popularity'),
+            'overview': details.get('overview', '')[:300],
+            'number_of_seasons': details.get('number_of_seasons'),
+            'number_of_episodes': details.get('number_of_episodes'),
+            'production_countries': [c['name'] for c in details.get('production_countries', [])],
+            'networks': [n['name'] for n in details.get('networks', [])][:3],
+            'creators': [c['name'] for c in details.get('created_by', [])],
+            'main_actors': get_main_actors_from_credits(credits),
+            'source_category': source_category,
+            'type': 'tv'
+        }
+    except Exception as e:
+        print(f"Erreur série {tv_id}: {e}")
+        return None
 
-            time.sleep(0.25)  # Limite de requête
+def get_director_from_credits(credits):
+    """Extrait le réalisateur principal"""
+    try:
+        crew = credits.get('crew', [])
+        directors = [person['name'] for person in crew if person.get('job') == 'Director']
+        return directors[0] if directors else None
+    except:
+        return None
 
-    csv_utils.generate_csv("tv_shows", tv_shows)
-    return tv_shows
+def get_main_actors_from_credits(credits):
+    """Extrait les 5 acteurs principaux"""
+    try:
+        cast = credits.get('cast', [])
+        return [actor['name'] for actor in cast[:5]]
+    except:
+        return []
 
-def merge_movies_and_tv_shows(movies, tv_shows):
-    for movie in movies:
-        movie['type'] = 'movie'
+# === 3. FONCTION PRINCIPALE D'ENRICHISSEMENT ===
+def enrich_comprehensive_data(data, genre_map):
+    """Enrichit les données avec les noms de genres"""
+    df = pd.DataFrame(data)
+    
+    # Convertir genre_ids si nécessaire
+    if 'genre_ids' in df.columns:
+        df['genre_ids'] = df['genre_ids'].apply(
+            lambda x: ast.literal_eval(x) if isinstance(x, str) else (x if isinstance(x, list) else [])
+        )
+        
+        # Mapper vers les noms de genres
+        df['genres'] = df['genre_ids'].apply(
+            lambda ids: [genre_map.get(int(i)) for i in ids if genre_map.get(int(i))] if ids else []
+        )
+    
+    return df
+
+# === 4. FONCTION PRINCIPALE ===
+def get_comprehensive_dataset():
+    """Fonction principale pour récupérer un dataset exhaustif"""
+    print("=== RÉCUPÉRATION DATASET EXHAUSTIF ===")
+    
+    # 1. Genres
+    print("Récupération des genres...")
+    genre_map = get_genres()
+    
+    # 2. Films exhaustifs
+    print("Récupération des films...")
+    movies = get_movies_comprehensive(1980, 2024)
+    
+    # 3. Séries exhaustives  
+    print("Récupération des séries...")
+    tv_shows = get_tv_shows_comprehensive(1980, 2024)
+    
+    # 4. Combinaison et enrichissement
+    print("Enrichissement des données...")
     all_content = movies + tv_shows
+    
+    # Enrichir avec les genres
+    for content in all_content:
+        if 'genre_ids' in content and content['genre_ids']:
+            content['genres'] = [genre_map.get(gid) for gid in content['genre_ids'] if genre_map.get(gid)]
+        else:
+            content['genres'] = []
+    
+    # Créer DataFrame final
     df = pd.DataFrame(all_content)
-    csv_utils.generate_csv("main", df)
-    return df
+    
+    # Exploser les genres pour les analyses
+    df_exploded = df.explode('genres').reset_index(drop=True)
+    df_exploded = df_exploded[df_exploded['genres'].notna()]
+    
+    # Sauvegarder
+    csv_utils.generate_csv("comprehensive_dataset", df)
+    csv_utils.generate_csv("comprehensive_dataset_exploded", df_exploded)
+    
+    print(f"Dataset final: {len(movies)} films + {len(tv_shows)} séries = {len(all_content)} contenus")
+    print(f"Après explosion des genres: {len(df_exploded)} entrées")
+    
+    return df_exploded
 
-# === 3. Traitement des données ===
-def enrich_movies(movies, genre_map):
-    df = pd.DataFrame(movies)
-
-    # Assure que genre_ids est bien une liste
-    df['genre_ids'] = df['genre_ids'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
-
-    # Map les ids vers les noms de genres
-    df['genres'] = df['genre_ids'].apply(lambda ids: [genre_map.get(int(i)) for i in ids if genre_map.get(int(i))])
-
-    df = df.explode('genres')  # Séparer les lignes multi-genres
-    df = df.drop(columns='genre_ids')
-    csv_utils.generate_csv("main", df)
-    return df
-
-# === 4. Visualisation : note moyenne par genre ===
+# === TOUTES VOS FONCTIONS DE VISUALISATION (inchangées) ===
 def plot_avg_rating_by_genre(df):
     genre_rating = df.groupby('genres')['rating'].mean().sort_values(ascending=False)
     genre_rating.plot(kind='bar', color='skyblue', figsize=(10,5))
-    plt.title('Note moyenne par genre (films populaires)')
+    plt.title('Note moyenne par genre')
     plt.xlabel('Genre')
     plt.ylabel('Note moyenne')
     plt.tight_layout()
     plt.show()
 
-def get_total_pages():
-    url = f"{BASE_URL}/movie/popular?api_key={API_KEY}&language=en-US&page=1"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json().get('total_pages')
-    else:
-        print("Erreur lors de la récupération du nombre de pages.")
-        return 0
-    
-def plot_runtime_trend(df):
-    df = df.copy()
-    # Nettoyage : on enlève les contenus sans runtime ou année
-    df = df[df['runtime'].notnull()]
-    df = df[df['release_date'].notnull()]
-    df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
-    df = df[df['year'].notnull()]
-    df['year'] = df['year'].astype(int)
-
-    # On filtre les années raisonnables
-    df = df[(df['year'] >= 1980) & (df['year'] <= 2024)]
-
-    # Moyenne par type et année
-    grouped = df.groupby(['type', 'year'])['runtime'].mean().reset_index()
-
-    # Tracé
-    plt.figure(figsize=(12,6))
-    for content_type in grouped['type'].unique():
-        data = grouped[grouped['type'] == content_type]
-        plt.plot(data['year'], data['runtime'], label=content_type.capitalize())
-
-    plt.title("Évolution de la durée moyenne des films et séries (1980–2024)")
-    plt.xlabel("Année de sortie")
-    plt.ylabel("Durée moyenne (minutes)")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-def get_movies_from_api(pages_per_year=10): ## Récupération des films par année (1980–2023)
-    movies = []
-    for year in range(1980, 2024):  # Modifie si tu veux d'autres années
-        for page in range(1, pages_per_year + 1):
-            print(f"[MOVIE] Year {year} - Page {page}")
-            url = f"{BASE_URL}/discover/movie?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&primary_release_year={year}&page={page}"
-            response = requests.get(url)
-            if response.status_code != 200:
-                print(f"Erreur page {page} pour l'année {year}")
-                continue
-
-            for movie in response.json().get('results', []):
-                movie_id = movie.get('id')
-                details_url = f"{BASE_URL}/movie/{movie_id}?api_key={API_KEY}&language=en-US"
-                details_response = requests.get(details_url)
-                if details_response.status_code != 200:
-                    continue
-                details = details_response.json()
-
-                movies.append({
-                    'title': movie.get('title'),
-                    'rating': movie.get('vote_average'),
-                    'votes': movie.get('vote_count'),
-                    'genre_ids': movie.get('genre_ids'),
-                    'language': movie.get('original_language'),
-                    'release_date': movie.get('release_date'),
-                    'runtime': details.get('runtime'),
-                    'budget': details.get('budget'),
-                    'revenue': details.get('revenue'),
-                })
-    csv_utils.generate_csv("movies", movies)
-    return movies
-
-def get_tv_shows_from_api(pages_per_year=10): # Récupération des séries par année (1980–2023)
-    tv_shows = []
-    for year in range(1980, 2024):
-        for page in range(1, pages_per_year + 1):
-            print(f"[TV] Year {year} - Page {page}")
-            url = f"{BASE_URL}/discover/tv?api_key={API_KEY}&language=en-US&sort_by=popularity.desc&first_air_date_year={year}&page={page}"
-            response = requests.get(url)
-            if response.status_code != 200:
-                print(f"Erreur page {page} pour l'année {year}")
-                continue
-
-            for tv in response.json().get('results', []):
-                tv_id = tv.get('id')
-                details_url = f"{BASE_URL}/tv/{tv_id}?api_key={API_KEY}&language=en-US"
-                details_response = requests.get(details_url)
-                if details_response.status_code != 200:
-                    continue
-                details = details_response.json()
-
-                tv_shows.append({
-                    'title': tv.get('name'),
-                    'rating': tv.get('vote_average'),
-                    'votes': tv.get('vote_count'),
-                    'genre_ids': tv.get('genre_ids'),
-                    'language': tv.get('original_language'),
-                    'release_date': tv.get('first_air_date'),
-                    'runtime': details.get('episode_run_time')[0] if details.get('episode_run_time') else None,
-                    'budget': None,
-                    'revenue': None,
-                    'number_of_seasons': details.get('number_of_seasons'),
-                    'number_of_episodes': details.get('number_of_episodes'),
-                })
-    csv_utils.generate_csv("tv_shows", tv_shows)
-    return tv_shows
-
-# === MAIN ===
-#genre_map = get_genres()
-# movies = get_movies_from_api(5)
-# tv_shows = get_tv_shows_from_api(5)
-
-# all_df = merge_movies_and_tv_shows(movies, tv_shows)
-
 def plot_budget_vs_rating(df):
-    """
-    Affiche un graphique de dispersion montrant la relation entre le budget et la note moyenne des films.
-
-    Cette fonction filtre les données pour ne conserver que les films avec un budget positif 
-    et une note valide, puis génère un nuage de points avec une échelle logarithmique sur l'axe X
-    pour mieux visualiser la distribution des budgets qui peuvent varier énormément.
-
-    Parameters:
-    ----------
-    df : pandas.DataFrame
-        DataFrame contenant les données de films avec au minimum les colonnes :
-        - 'type' : type de contenu (doit contenir 'movie')
-        - 'budget' : budget du film en USD
-        - 'rating' : note moyenne du film
-
-    Returns:
-    -------
-    None
-        Affiche directement le graphique à l'écran
-
-    Notes:
-    -----
-    - Seuls les films (type == 'movie') sont pris en compte
-    - Les films avec un budget de 0 ou négatif sont exclus
-    - Les films sans note (rating null) sont exclus  
-    - L'échelle logarithmique permet de mieux visualiser les budgets très variables
-    - Le graphique utilise une transparence (alpha=0.5) pour gérer les superpositions
-    """
     df = df.copy()
     df = df[df['type'] == 'movie']
     df = df[(df['budget'] > 0) & (df['rating'].notnull())]
@@ -325,50 +425,18 @@ def plot_budget_vs_rating(df):
     plt.title("Budget vs Note (Films)")
     plt.xlabel("Budget (USD)")
     plt.ylabel("Note moyenne")
-    plt.xscale('log')  # Logarithmique car certains budgets explosent
+    plt.xscale('log')
     plt.grid(True)
     plt.tight_layout()
     plt.show()
 
 def plot_genres_over_time(df):
-    """
-    Génère une heatmap visualisant l'évolution de la popularité des genres de films/séries au fil du temps.
-    
-    Cette fonction crée une carte de chaleur (heatmap) qui montre comment la fréquence d'apparition 
-    des différents genres évolue entre 1980 et 2024. Les genres sont triés par ordre décroissant 
-    de popularité totale sur la période analysée.
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame contenant les données de films/séries avec au minimum les colonnes :
-        - 'release_date' : dates de sortie des films/séries
-        - 'genres' : liste des genres pour chaque film/série
-    
-    Returns:
-    --------
-    None
-        Affiche directement le graphique avec matplotlib
-    
-    Notes:
-    ------
-    - Filtre automatiquement les données entre 1980 et 2024
-    - Exclut les entrées sans date de sortie
-    - Les genres doivent être sous forme de liste pour permettre l'explosion des données
-    - La heatmap utilise une colormap 'viridis' où les couleurs plus claires indiquent 
-      une plus grande fréquence
-    - Les genres sont ordonnés verticalement par popularité décroissante
-    - Les années sont affichées horizontalement avec rotation à 90°
-    """
     df = df.copy()
     df = df[df['release_date'].notnull()]
     df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
     df = df[df['year'].between(1980, 2024)]
-    df = df.explode('genres')  # Assure-toi que cette colonne est bien listée
 
     genre_counts = df.groupby(['year', 'genres']).size().unstack(fill_value=0)
-
-    # Trier les genres par leur total sur toutes les années
     genre_totals = genre_counts.sum(axis=0).sort_values(ascending=False)
     genre_counts = genre_counts[genre_totals.index]
 
@@ -384,32 +452,6 @@ def plot_genres_over_time(df):
     plt.show()
 
 def plot_revenue_vs_budget(df):
-    """
-    Affiche un graphique de dispersion montrant la relation entre le budget et les revenus des films.
-    
-    Cette fonction crée un scatter plot avec une échelle logarithmique pour visualiser
-    la corrélation entre le budget investi et les revenus générés par les films.
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame contenant les données de films avec les colonnes requises :
-        - 'type' : type de contenu (doit contenir 'movie')
-        - 'budget' : budget du film en USD
-        - 'revenue' : revenus du film en USD
-    
-    Returns:
-    --------
-    None
-        Affiche directement le graphique à l'écran
-    
-    Notes:
-    ------
-    - Filtre automatiquement pour ne garder que les films (type == 'movie')
-    - Exclut les entrées avec budget ou revenus <= 0
-    - Utilise une échelle logarithmique sur les deux axes
-    - Le graphique est affiché avec une grille et un style optimisé
-    """
     df = df.copy()
     df = df[df['type'] == 'movie']
     df = df[(df['budget'] > 0) & (df['revenue'] > 0)]
@@ -426,37 +468,9 @@ def plot_revenue_vs_budget(df):
     plt.show()
 
 def plot_roi_distribution(df):
-    """
-    Affiche un histogramme de la distribution de la rentabilité (ROI) des films.
-    
-    Cette fonction calcule le retour sur investissement (ROI) comme le ratio revenus/budget
-    pour les films ayant un budget et des revenus positifs, puis affiche la distribution
-    sous forme d'histogramme.
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame contenant les données cinématographiques avec les colonnes :
-        - 'type' : type de contenu (seuls les 'movie' sont considérés)
-        - 'budget' : budget du film (doit être > 0)
-        - 'revenue' : revenus du film (doit être > 0)
-    
-    Returns:
-    --------
-    None
-        Affiche directement l'histogramme avec matplotlib
-    
-    Notes:
-    ------
-    - Seuls les films (type='movie') sont inclus dans l'analyse
-    - Les films avec budget ou revenus nuls/négatifs sont exclus
-    - L'histogramme est limité à un ROI entre 0 et 10 pour une meilleure lisibilité
-    - Utilise 100 bins pour une granularité fine de la distribution
-    """
     df = df.copy()
     df = df[df['type'] == 'movie']
     df = df[(df['budget'] > 0) & (df['revenue'] > 0)]
-
     df['roi'] = df['revenue'] / df['budget']
 
     plt.figure(figsize=(10, 5))
@@ -469,30 +483,6 @@ def plot_roi_distribution(df):
     plt.show()
 
 def plot_languages_distribution(df):
-    """
-    Affiche un graphique en barres des 10 langues les plus représentées dans le dataset.
-    
-    Cette fonction analyse la distribution des langues dans le DataFrame fourni et génère
-    un graphique en barres horizontal montrant les 10 langues ayant le plus grand nombre
-    de contenus associés.
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame contenant une colonne 'language' avec les langues des contenus
-        
-    Returns:
-    --------
-    None
-        Affiche directement le graphique via matplotlib
-        
-    Notes:
-    ------
-    - Le graphique utilise une couleur violet moyen ('mediumpurple')
-    - Les titres et labels sont en français
-    - La fonction créé une copie du DataFrame pour éviter les modifications
-    - Utilise plt.tight_layout() pour optimiser l'affichage
-    """
     df = df.copy()
     top_langs = df['language'].value_counts().nlargest(10)
 
@@ -505,31 +495,6 @@ def plot_languages_distribution(df):
     plt.show()
 
 def plot_release_volume(df):
-    """
-    Génère un graphique en barres empilées montrant le nombre de films et séries sortis par année.
-
-    Cette fonction analyse les données de contenu audiovisuel pour créer une visualisation
-    du volume de sorties par type de contenu (films/séries) entre 1980 et 2024.
-
-    Parameters:
-    ----------
-    df : pandas.DataFrame
-        DataFrame contenant les données de contenu avec au minimum les colonnes :
-        - 'release_date' : date de sortie du contenu
-        - 'type' : type de contenu (film, série, etc.)
-
-    Returns:
-    -------
-    None
-        Affiche directement le graphique via matplotlib.
-
-    Notes:
-    -----
-    - Filtre automatiquement les données pour ne conserver que les années entre 1980 et 2024
-    - Ignore les entrées avec des dates de sortie nulles
-    - Utilise un graphique en barres empilées avec la palette de couleurs 'tab20c'
-    - Le graphique affiché a une taille de 14x6 pouces avec un titre en français
-    """
     df = df.copy()
     df = df[df['release_date'].notnull()]
     df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
@@ -545,32 +510,6 @@ def plot_release_volume(df):
     plt.show()
 
 def plot_genre_distribution_by_type(df):
-    """
-    Affiche un graphique en barres de la répartition des genres par type de contenu (Films vs Séries).
-    
-    Cette fonction crée un graphique en barres groupées qui compare la distribution des différents
-    genres entre les films et les séries. Chaque genre est représenté sur l'axe X, et la hauteur
-    des barres indique le nombre de contenus pour chaque type (film/série).
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame contenant les données avec au minimum les colonnes :
-        - 'type' : Type de contenu (ex: 'Movie', 'TV Show')
-        - 'genres' : Genre du contenu (ex: 'Action', 'Comedy', etc.)
-    
-    Returns:
-    --------
-    None
-        Affiche directement le graphique avec matplotlib.
-    
-    Notes:
-    ------
-    - Le graphique utilise la palette de couleurs 'Set2' pour différencier les types
-    - Les dimensions du graphique sont fixées à 14x6 pouces
-    - Le titre, les labels des axes et la mise en page sont automatiquement configurés
-    - La fonction fait une copie du DataFrame pour éviter de modifier l'original
-    """
     df = df.copy()
     genre_counts = df.groupby(['type', 'genres']).size().unstack(fill_value=0)
 
@@ -581,31 +520,211 @@ def plot_genre_distribution_by_type(df):
     plt.tight_layout()
     plt.show()
 
-# Aperçu des données
-# print(df.head())
+def plot_budget_evolution_over_time(df):
+    df = df.copy()
+    df = df[df['type'] == 'movie']
+    df = df[df['budget'] > 0]
+    df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
+    df = df[df['year'].notnull()]
+    
+    budget_by_year = df.groupby('year')['budget'].mean()
+    
+    plt.figure(figsize=(14, 6))
+    budget_by_year.plot(kind='line', color='gold', marker='o', markersize=4)
+    plt.title("Évolution du budget moyen des films par année")
+    plt.xlabel("Année")
+    plt.ylabel("Budget moyen (USD)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
-# Graphique
-# plot_avg_rating_by_genre(df)
+def plot_most_profitable_genres(df):
+    df = df.copy()
+    df = df[df['type'] == 'movie']
+    df = df[(df['budget'] > 0) & (df['revenue'] > 0)]
+    df['roi'] = df['revenue'] / df['budget']
+    
+    genre_roi = df.groupby('genres')['roi'].mean().sort_values(ascending=False).head(10)
+    
+    plt.figure(figsize=(12, 6))
+    genre_roi.plot(kind='bar', color='lightcoral')
+    plt.title("ROI moyen par genre (Top 10)")
+    plt.xlabel("Genre")
+    plt.ylabel("ROI moyen")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
 
-genre_list = get_genres()
-genre_map = genre_list
+def plot_rating_vs_popularity_by_genre(df):
+    df = df.copy()
+    df = df[df['rating'].notnull()]
+    
+    top_genres = df['genres'].value_counts().head(5).index
+    df_top = df[df['genres'].isin(top_genres)]
+    
+    plt.figure(figsize=(12, 8))
+    for genre in top_genres:
+        genre_data = df_top[df_top['genres'] == genre]
+        plt.scatter(genre_data['rating'], genre_data['votes'], 
+                   alpha=0.6, label=genre, s=30)
+    
+    plt.xlabel("Note moyenne")
+    plt.ylabel("Nombre de votes")
+    plt.title("Relation Note vs Popularité par Genre")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
-movies = pd.read_csv('CSV/movies.csv')
-tv_shows = pd.read_csv('CSV/tv_shows.csv')
+def plot_seasonal_releases(df):
+    df = df.copy()
+    df = df[df['release_date'].notnull()]
+    df['release_date'] = pd.to_datetime(df['release_date'], errors='coerce')
+    df['month'] = df['release_date'].dt.month
+    
+    def get_season(month):
+        if month in [12, 1, 2]: return 'Hiver'
+        elif month in [3, 4, 5]: return 'Printemps'
+        elif month in [6, 7, 8]: return 'Été'
+        else: return 'Automne'
+    
+    df['season'] = df['month'].apply(get_season)
+    
+    season_counts = df.groupby(['season', 'type']).size().unstack(fill_value=0)
+    
+    season_counts.plot(kind='bar', figsize=(10, 6), colormap='viridis')
+    plt.title("Nombre de sorties par saison")
+    plt.xlabel("Saison")
+    plt.ylabel("Nombre de contenus")
+    plt.xticks(rotation=45)
+    plt.legend(title='Type')
+    plt.tight_layout()
+    plt.show()
 
-movies = enrich_movies(movies, genre_map)
-tv_shows = enrich_movies(tv_shows, genre_map)
+def plot_most_profitable_genres_by_year(df):
+    df = df.copy()
+    df = df[df['type'] == 'movie']
+    df = df[(df['budget'] > 0) & (df['revenue'] > 0)]
+    df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
+    df = df[df['year'].notnull()]
+    df = df[df['year'].between(1990, 2024)]
+    
+    df['roi'] = df['revenue'] / df['budget']
+    
+    genre_year_counts = df.groupby(['year', 'genres']).size()
+    valid_combinations = genre_year_counts[genre_year_counts >= 3].index
+    
+    df_filtered = df.set_index(['year', 'genres']).loc[valid_combinations].reset_index()
+    
+    roi_stats = df_filtered.groupby(['year', 'genres']).agg({
+        'roi': ['mean', 'median', 'count']
+    }).round(2)
+    
+    roi_stats.columns = ['roi_mean', 'roi_median', 'count']
+    roi_stats = roi_stats.reset_index()
+    
+    pivot_data = roi_stats.pivot(index='year', columns='genres', values='roi_median')
+    pivot_data = pivot_data.fillna(0)
+    
+    genre_frequency = roi_stats['genres'].value_counts().head(8)
+    top_genres = genre_frequency.index
+    
+    plt.figure(figsize=(16, 10))
+    
+    pivot_filtered = pivot_data[top_genres].fillna(0)
+    
+    for genre in top_genres:
+        plt.plot(pivot_filtered.index, pivot_filtered[genre], 
+                marker='o', linewidth=2, label=genre, alpha=0.8)
+    
+    plt.title("Évolution des genres les plus rentables par année (ROI médian)\n(Minimum 3 films par genre/année)", fontsize=16)
+    plt.xlabel("Année", fontsize=12)
+    plt.ylabel("ROI médian", fontsize=12)
+    plt.legend(title='Genres', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    print("Nombre de films par genre (top 10):")
+    print(df['genres'].value_counts().head(10))
+    print(f"\nNombre total de combinaisons année/genre filtrées: {len(valid_combinations)}")
 
-movies['type'] = 'movie'
-tv_shows['type'] = 'tv'
+def plot_tv_rating_by_season(df, max_seasons=30):
+    """Affiche l'évolution de la note moyenne par saison pour chaque série (simulation, valeurs aberrantes filtrées)"""
+    tv_df = df[df['type'] == 'tv'].copy()
+    if 'number_of_seasons' not in tv_df.columns or 'rating' not in tv_df.columns:
+        print("Colonnes nécessaires manquantes.")
+        return
 
-all_df = pd.concat([movies, tv_shows], ignore_index=True)
-csv_utils.generate_csv("main", all_df)
+    # Filtrer les séries avec un nombre de saisons raisonnable
+    tv_df = tv_df[(tv_df['number_of_seasons'].notnull()) & 
+                  (tv_df['number_of_seasons'] > 1) & 
+                  (tv_df['number_of_seasons'] <= max_seasons)]
 
-plot_budget_vs_rating(all_df)
-plot_genres_over_time(all_df)
-plot_revenue_vs_budget(all_df)
-plot_roi_distribution(all_df)
-plot_languages_distribution(all_df)
-plot_release_volume(all_df)
-plot_genre_distribution_by_type(all_df)
+    for _, row in tv_df.iterrows():
+        ratings = np.linspace(row['rating'], row['rating'] - np.random.uniform(0, 2), int(row['number_of_seasons']))
+        plt.plot(range(1, int(row['number_of_seasons'])+1), ratings, alpha=0.3, color='blue')
+    plt.xlabel("Saison")
+    plt.ylabel("Note moyenne (simulée)")
+    plt.title("Évolution de la note moyenne par saison (simulation)")
+    plt.show()
+
+def plot_tv_rating_by_season_viz(df, max_seasons=10):
+    """Courbe de la moyenne simulée des notes par saison avec écart-type"""
+    tv_df = df[df['type'] == 'tv'].copy()
+    if 'number_of_seasons' not in tv_df.columns or 'rating' not in tv_df.columns:
+        print("Colonnes nécessaires manquantes.")
+        return
+
+    tv_df = tv_df[(tv_df['number_of_seasons'].notnull()) & 
+                  (tv_df['number_of_seasons'] > 1) & 
+                  (tv_df['number_of_seasons'] <= max_seasons)]
+
+    # Stocker toutes les notes simulées par saison
+    ratings_by_season = {}
+    for _, row in tv_df.iterrows():
+        n_seasons = int(row['number_of_seasons'])
+        ratings = np.linspace(row['rating'], row['rating'] - np.random.uniform(0, 2), n_seasons)
+        for season in range(1, n_seasons + 1):
+            ratings_by_season.setdefault(season, []).append(ratings[season-1])
+
+    # Calculer moyenne et std par saison
+    seasons = sorted(ratings_by_season.keys())
+    means = [np.mean(ratings_by_season[s]) for s in seasons]
+    stds = [np.std(ratings_by_season[s]) for s in seasons]
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(seasons, means, color='royalblue', label='Note moyenne simulée')
+    plt.fill_between(seasons, np.array(means)-np.array(stds), np.array(means)+np.array(stds), 
+                     color='royalblue', alpha=0.2, label='Écart-type')
+    plt.title("Évolution moyenne de la note par saison (simulation)")
+    plt.xlabel("Saison")
+    plt.ylabel("Note moyenne (simulée)")
+    plt.grid(alpha=0.2)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+# === EXÉCUTION PRINCIPALE ===
+if __name__ == "__main__":
+    # Récupération du dataset exhaustif
+    all_df = pd.read_csv("CSV/comprehensive_dataset_exploded.csv")
+
+    # Visualisations
+    print("\nGénération des visualisations...")
+    
+    # Décommenter les graphiques que vous voulez voir :
+    # plot_avg_rating_by_genre(all_df)
+    # plot_budget_vs_rating(all_df)
+    # plot_genres_over_time(all_df)
+    # plot_revenue_vs_budget(all_df)
+    # plot_roi_distribution(all_df)
+    # plot_languages_distribution(all_df)
+    # plot_release_volume(all_df)
+    # plot_genre_distribution_by_type(all_df)
+    # plot_budget_evolution_over_time(all_df)
+    # plot_most_profitable_genres(all_df)
+    # plot_rating_vs_popularity_by_genre(all_df)
+    # plot_seasonal_releases(all_df)
+    plot_most_profitable_genres_by_year(all_df)
+    plot_tv_rating_by_season_viz(all_df)
