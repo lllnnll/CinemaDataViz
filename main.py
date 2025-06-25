@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import csv_utils
 import time
 import ast
+import seaborn as sns
 
 load_dotenv()
 # === CONFIGURATION ===
@@ -581,6 +582,36 @@ def plot_genre_distribution_by_type(df):
     plt.tight_layout()
     plt.show()
 
+def get_28_colors():
+    palette1 = sns.color_palette("tab20", 20)
+    palette2 = sns.color_palette("Set3", 12)
+    combined = palette1 + palette2
+    return combined[:28]
+
+def plot_genre_votes_by_year(df, top_n=28, start_year=1980, end_year=2024):
+    df = df.copy()
+    df = df[df['votes'].notnull() & df['genres'].notnull() & df['release_date'].notnull()]
+    df['year'] = pd.to_datetime(df['release_date'], errors='coerce').dt.year
+    df = df[df['year'].between(start_year, end_year)]
+
+    votes_per_year_genre = df.groupby(['year', 'genres'])['votes'].sum().unstack(fill_value=0)
+    total_votes_per_genre = votes_per_year_genre.sum().sort_values(ascending=False)
+    top_genres = total_votes_per_genre.head(top_n).index
+    votes_per_year_genre = votes_per_year_genre[top_genres]
+
+    colors = get_28_colors()
+
+    plt.figure(figsize=(16, 8))
+    for i, genre in enumerate(top_genres):
+        plt.plot(votes_per_year_genre.index, votes_per_year_genre[genre], label=genre, color=colors[i], linewidth=2)
+
+    plt.title(f'Évolution des votes par genre ({start_year}-{end_year})', fontsize=16, fontweight='bold')
+    plt.xlabel('Année')
+    plt.ylabel('Nombre total de votes')
+    plt.legend(title='Genres', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.show()
+
 # Aperçu des données
 # print(df.head())
 
@@ -602,6 +633,7 @@ tv_shows['type'] = 'tv'
 all_df = pd.concat([movies, tv_shows], ignore_index=True)
 csv_utils.generate_csv("main", all_df)
 
+plot_genre_votes_by_year(all_df)
 plot_budget_vs_rating(all_df)
 plot_genres_over_time(all_df)
 plot_revenue_vs_budget(all_df)
