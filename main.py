@@ -694,14 +694,152 @@ def plot_tv_rating_by_season_viz(df, max_seasons=10):
     stds = [np.std(ratings_by_season[s]) for s in seasons]
 
     plt.figure(figsize=(10, 6))
-    plt.plot(seasons, means, color='royalblue', label='Note moyenne simulée')
+    plt.plot(seasons, means, color='royalblue', label='Note moyenne')
     plt.fill_between(seasons, np.array(means)-np.array(stds), np.array(means)+np.array(stds), 
                      color='royalblue', alpha=0.2, label='Écart-type')
     plt.title("Évolution moyenne de la note par saison (simulation)")
     plt.xlabel("Saison")
-    plt.ylabel("Note moyenne (simulée)")
+    plt.ylabel("Note moyenne")
     plt.grid(alpha=0.2)
     plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_best_movie_duration_vs_rating(df):
+    """Visualisation de la relation entre la durée des films et leur note"""
+    df = df.copy()
+    df = df[(df['type'] == 'movie') & (df['runtime'].notnull()) & (df['rating'].notnull())]
+    df = df[(df['runtime'] > 40) & (df['runtime'] < 240)]  # Filtre les durées aberrantes
+
+    plt.figure(figsize=(12, 7))
+    plt.scatter(df['runtime'], df['rating'], alpha=0.3, color='teal', label='Films')
+    
+    # Courbe de tendance polynomiale (degré 2)
+    z = np.polyfit(df['runtime'], df['rating'], 2)
+    p = np.poly1d(z)
+    x = np.linspace(df['runtime'].min(), df['runtime'].max(), 200)
+    plt.plot(x, p(x), color='orange', linewidth=2, label='Tendance (poly2)')
+    
+    # Affiche la durée optimale estimée
+    best_duration = -z[1] / (2 * z[0])
+    plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée optimale ≈ {int(best_duration)} min')
+    plt.title("Quelle durée pour la meilleure note ?")
+    plt.xlabel("Durée du film (minutes)")
+    plt.ylabel("Note moyenne")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.show()
+    print(f"Durée optimale estimée pour la meilleure note : {int(best_duration)} minutes")
+
+
+def plot_best_tv_episode_duration_vs_rating(df):
+    """Visualisation de la relation entre la durée des épisodes de séries et leur note"""
+    df = df.copy()
+    df = df[(df['type'] == 'tv') & (df['runtime'].notnull()) & (df['rating'].notnull())]
+    df = df[(df['runtime'] > 10) & (df['runtime'] < 120)]  # Filtre les durées aberrantes
+
+    plt.figure(figsize=(12, 7))
+    plt.scatter(df['runtime'], df['rating'], alpha=0.3, color='purple', label='Séries')
+    
+    # Courbe de tendance polynomiale (degré 2)
+    z = np.polyfit(df['runtime'], df['rating'], 2)
+    p = np.poly1d(z)
+    x = np.linspace(df['runtime'].min(), df['runtime'].max(), 200)
+    plt.plot(x, p(x), color='orange', linewidth=2, label='Tendance (poly2)')
+    
+    # Vérification : s'assurer que la parabole a un maximum (coefficient a < 0)
+    if z[0] >= 0:
+        print("Attention: La courbe ne présente pas de maximum clair")
+        best_duration = df['runtime'].median()  # Utiliser la médiane comme fallback
+        plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée médiane ≈ {int(best_duration)} min')
+    else:
+        best_duration = -z[1] / (2 * z[0])
+        # Vérifier que la durée optimale est dans la plage des données
+        if best_duration < df['runtime'].min() or best_duration > df['runtime'].max():
+            print("Attention: La durée optimale calculée est hors de la plage des données")
+            best_duration = df['runtime'].median()
+            plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée médiane ≈ {int(best_duration)} min')
+        else:
+            plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée optimale ≈ {int(best_duration)} min')
+    
+    plt.title("Quelle durée d'épisode pour la meilleure note ? (Séries TV)")
+    plt.xlabel("Durée moyenne d'un épisode (minutes)")
+    plt.ylabel("Note moyenne")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.show()
+
+def plot_tv_seasons_vs_rating(df):
+    """Visualisation de la relation entre le nombre de saisons et la note moyenne des séries"""
+    df = df.copy()
+    df = df[(df['type'] == 'tv') & (df['number_of_seasons'].notnull()) & (df['rating'].notnull())]
+    df = df[(df['number_of_seasons'] > 1) & (df['number_of_seasons'] < 30)]  # Filtre les valeurs aberrantes
+
+    plt.figure(figsize=(12, 7))
+    plt.scatter(df['number_of_seasons'], df['rating'], alpha=0.3, color='darkorange', label='Séries')
+    
+    # Courbe de tendance polynomiale (degré 2)
+    z = np.polyfit(df['number_of_seasons'], df['rating'], 2)
+    p = np.poly1d(z)
+    x = np.linspace(df['number_of_seasons'].min(), df['number_of_seasons'].max(), 200)
+    plt.plot(x, p(x), color='blue', linewidth=2, label='Tendance (poly2)')
+    
+    # Affiche le nombre de saisons optimal estimé
+    best_seasons = -z[1] / (2 * z[0])
+    plt.axvline(best_seasons, color='red', linestyle='--', label=f'Nb optimal ≈ {int(best_seasons)} saisons')
+    plt.title("Quel nombre de saisons pour la meilleure note ? (Séries TV)")
+    plt.xlabel("Nombre de saisons")
+    plt.ylabel("Note moyenne")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.show()
+    print(f"Nombre de saisons optimal estimé pour la meilleure note : {int(best_seasons)}")
+
+def plot_tv_season_total_duration_vs_rating(df):
+    """Visualisation de la relation entre la durée totale d'une saison et la note des séries"""
+    df = df.copy()
+    df = df[(df['type'] == 'tv') & (df['runtime'].notnull()) & (df['rating'].notnull()) & (df['number_of_episodes'].notnull())]
+    
+    # Calculer la durée totale d'une saison (durée épisode × nombre d'épisodes / nombre de saisons)
+    df['episodes_per_season'] = df['number_of_episodes'] / df['number_of_seasons'].fillna(1)
+    df['season_total_duration'] = df['runtime'] * df['episodes_per_season']
+    
+    # Filtrer les valeurs aberrantes
+    df = df[(df['season_total_duration'] > 200) & (df['season_total_duration'] < 2000)]
+    df = df[df['season_total_duration'].notnull()]
+
+    plt.figure(figsize=(12, 7))
+    plt.scatter(df['season_total_duration'], df['rating'], alpha=0.3, color='mediumseagreen', label='Séries')
+    
+    # Courbe de tendance polynomiale (degré 2)
+    z = np.polyfit(df['season_total_duration'], df['rating'], 2)
+    p = np.poly1d(z)
+    x = np.linspace(df['season_total_duration'].min(), df['season_total_duration'].max(), 200)
+    plt.plot(x, p(x), color='orange', linewidth=2, label='Tendance (poly2)')
+    
+    # Vérification : s'assurer que la parabole a un maximum (coefficient a < 0)
+    if z[0] >= 0:
+        print("Attention: La courbe ne présente pas de maximum clair pour la durée de saison")
+        best_duration = df['season_total_duration'].median()
+        plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée médiane ≈ {int(best_duration)} min')
+    else:
+        best_duration = -z[1] / (2 * z[0])
+        # Vérifier que la durée optimale est dans la plage des données
+        if best_duration < df['season_total_duration'].min() or best_duration > df['season_total_duration'].max():
+            print("Attention: La durée optimale calculée est hors de la plage des données")
+            best_duration = df['season_total_duration'].median()
+            plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée médiane ≈ {int(best_duration)} min')
+        else:
+            plt.axvline(best_duration, color='red', linestyle='--', label=f'Durée optimale ≈ {int(best_duration)} min')
+    
+    plt.title("Quelle durée totale de saison pour la meilleure note ? (Séries TV)")
+    plt.xlabel("Durée totale d'une saison (minutes)")
+    plt.ylabel("Note moyenne")
+    plt.legend()
+    plt.grid(alpha=0.2)
     plt.tight_layout()
     plt.show()
 
@@ -709,14 +847,18 @@ def plot_tv_rating_by_season_viz(df, max_seasons=10):
 if __name__ == "__main__":
     # Récupération du dataset exhaustif
     all_df = pd.read_csv("CSV/comprehensive_dataset_exploded.csv")
+    all_df_non_exploded = pd.read_csv("CSV/comprehensive_dataset.csv")
 
     # Visualisations
     print("\nGénération des visualisations...")
     
     # Décommenter les graphiques que vous voulez voir :
+    plot_tv_season_total_duration_vs_rating(all_df_non_exploded)
+    plot_best_tv_episode_duration_vs_rating(all_df_non_exploded)
     # plot_avg_rating_by_genre(all_df)
-    # plot_budget_vs_rating(all_df)
-    # plot_genres_over_time(all_df)
+    # plot_budget_vs_rating(all_df) 
+    plot_best_movie_duration_vs_rating(all_df_non_exploded)
+    #plot_genres_over_time(all_df)
     # plot_revenue_vs_budget(all_df)
     # plot_roi_distribution(all_df)
     # plot_languages_distribution(all_df)
@@ -726,5 +868,5 @@ if __name__ == "__main__":
     # plot_most_profitable_genres(all_df)
     # plot_rating_vs_popularity_by_genre(all_df)
     # plot_seasonal_releases(all_df)
-    plot_most_profitable_genres_by_year(all_df)
-    plot_tv_rating_by_season_viz(all_df)
+    #plot_most_profitable_genres_by_year(all_df)
+    plot_tv_rating_by_season_viz(all_df_non_exploded)
